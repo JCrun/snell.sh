@@ -45,6 +45,27 @@ install_singbox() {
 
 generate_config() {
     mkdir -p /etc/sing-box
+    if [ -f "$CONFIG_PATH" ]; then
+        echo "配置文件已存在: $CONFIG_PATH"
+        return
+    fi
+
+    read -p "请输入 AnyTLS 监听端口 (默认随机): " ANYTLS_PORT
+    ANYTLS_PORT=$(shuf -i 10000-65535 -n 1)
+
+    read -p "请输入 AnyTLS 密码 (默认随机): " ANYTLS_PASS
+    # $(sing-box generate uuid)
+    ANYTLS_PASS=$($SINGBOX_BIN generate uuid)
+
+    read -p "请输入 Reality Private Key (默认随机): " REALITY_PRIVATE_KEY
+    key_pair=$(sing-box generate reality-keypair)
+    # private_key=$(echo "$key_pair" | awk '/PrivateKey/ {print $2}' | tr -d '"')
+    # public_key=$(echo "$key_pair" | awk '/PublicKey/ {print $2}' | tr -d '"')
+    REALITY_PRIVATE_KEY=$(echo "$key_pair" | awk '/PrivateKey/ {print $2}' | tr -d '"')
+
+    read -p "请输入 Reality Short ID (多个用逗号分隔, 默认随机): " REALITY_SHORT_ID
+    # $(sing-box generate rand --hex 4)
+    REALITY_SHORT_ID=$(sing-box generate rand --hex 4)
 
     read -p "请输入 ShadowTLS 监听端口 (默认随机): " SHADOWTLS_DETOUR_PORT
     SHADOWTLS_DETOUR_PORT=$(shuf -i 10000-65535 -n 1)
@@ -72,6 +93,30 @@ generate_config() {
     cat > $CONFIG_PATH <<EOF
 {
   "inbounds": [
+    {
+      "type": "anytls",
+      "tag": "anyreality-sb",
+      "listen": "::",
+      "listen_port": ${ANYTLS_PORT},
+      "tls": {
+        "enabled": true,
+        "server_name": "${SNI}",
+        "reality": {
+          "enabled": true,
+          "handshake": {
+            "server": "${SNI}",
+            "server_port": 443
+          },
+          "private_key": "${REALITY_PRIVATE_KEY}",
+          "short_id": "${REALITY_SHORT_ID}"
+        }
+      },
+      "users": [
+        {
+          "password": "${ANYTLS_PASS}"
+        }
+      ]
+    },
     {
       "type": "shadowtls",
       "tag": "shadowtls-in-for-snell",
