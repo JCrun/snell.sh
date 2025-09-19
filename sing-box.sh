@@ -50,6 +50,13 @@ generate_config() {
         return
     fi
 
+    # 获取 IPv4 地址
+    IPV4_ADDR=$(curl -s4 https://api.ipify.org)
+    if [ $? -eq 0 ] && [ ! -z "$IPV4_ADDR" ]; then
+        IP_COUNTRY_IPV4=$(curl -s http://ipinfo.io/${IPV4_ADDR}/country)
+        echo "IPv4 地址: ${IPV4_ADDR} 所在国家: ${IP_COUNTRY_IPV4}"
+    fi
+
     read -p "请输入 AnyTLS 监听端口 (默认随机): " ANYTLS_PORT
     ANYTLS_PORT=$(shuf -i 10000-65535 -n 1)
 
@@ -62,6 +69,7 @@ generate_config() {
     # private_key=$(echo "$key_pair" | awk '/PrivateKey/ {print $2}' | tr -d '"')
     # public_key=$(echo "$key_pair" | awk '/PublicKey/ {print $2}' | tr -d '"')
     REALITY_PRIVATE_KEY=$(echo "$key_pair" | awk '/PrivateKey/ {print $2}' | tr -d '"')
+    REALITY_PUBLIC_KEY=$(echo "$key_pair" | awk '/PublicKey/ {print $2}' | tr -d '"')
 
     read -p "请输入 Reality Short ID (多个用逗号分隔, 默认随机): " REALITY_SHORT_ID
     # $(sing-box generate rand --hex 4)
@@ -86,16 +94,28 @@ generate_config() {
     SHADOWTLS_PASS=$($SINGBOX_BIN generate rand 16 --base64)
 
     SNELL_PORT=$(grep -E '^listen' "${SNELL_CONF_FILE}" | sed -n 's/.*::0:\([0-9]*\)/\1/p')
-    if [ -z "$SNELL_PORT" ]; then
-        echo "无法从 Snell 配置文件中获取监听端口，请确保 Snell 已正确安装并配置。"
-        exit 1
+    SNELL_PSK=$(grep -E '^psk' "${SNELL_CONF_FILE}" | awk -F'=' '{print $2}' | tr -d ' ')
+    if [ ! -z "$SNELL_PORT" ] && [ ! -z "$SNELL_PSK" ]; then
+        echo "${SNELL_PORT}|${SNELL_PSK}"
     fi
     cat > $CONFIG_PATH <<EOF
 {
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "https",
+        "server": "8.8.8.8"
+      }
+    ],
+    "strategy": "prefer_ipv4"
+  },
   "inbounds": [
     {
       "type": "anytls",
-      "tag": "anyreality-sb",
       "listen": "::",
       "listen_port": ${ANYTLS_PORT},
       "tls": {
@@ -115,6 +135,17 @@ generate_config() {
         {
           "password": "${ANYTLS_PASS}"
         }
+      ],
+      "padding_scheme": [
+        "stop=8",
+        "0=30-30",
+        "1=100-400",
+        "2=400-500,c,500-1000,c,500-1000,c,500-1000,c,500-1000",
+        "3=9-9,500-1000",
+        "4=500-1000",
+        "5=500-1000",
+        "6=500-1000",
+        "7=500-1000"
       ]
     },
     {
@@ -169,21 +200,113 @@ generate_config() {
       }
     }
   ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block-out"
+    }
+  ],
   "route": {
     "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "action": "resolve",
+        "strategy": "prefer_ipv4"
+      },
+      {
+        "ip_cidr": [
+          "::/0",
+          "0.0.0.0/0"
+        ],
+        "outbound": "direct"
+      },
       {
         "inbound": "shadowtls-in-for-snell",
         "action": "route-options",
         "override_address": "127.0.0.1",
         "override_port": ${SNELL_PORT}
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
       }
-    ]
+    ],
+    "final": "direct"
   }
 }
 
 EOF
 
-    echo "配置已生成: $CONFIG_PATH"
+    # 生成sing-box client端配置
+    cat > /etc/sing-box/client-config.json <<EOF
+{
+  "outbounds": [
+    {
+      "tag": "",
+      "type": "shadowsocks",
+      "method": "2022-blake3-aes-256-gcm",
+      "password": "${SHADOWSOCKS_PASS}",
+      "detour": "shadowtls-out"
+    },
+    {
+      "tag": "shadowtls-out",
+      "type": "shadowtls",
+      "server": "${IPV4_ADDR}",
+      "server_port": ${SHADOWTLS_DETOUR_PORT},
+      "version": 3,
+      "password": "${SHADOWTLS_DETOUR_PASS}",
+      "tls": {
+        "enabled": true,
+        "server_name": "${SNI}",
+        "utls": {
+          "enabled": true
+        }
+      }
+    },
+    {
+      "type": "anytls",
+      "tag": "anytls-out",
+      "server": "${IPV4_ADDR}",
+      "server_port": ${ANYTLS_PORT},
+      "tls": {
+        "enabled": true,
+        "server_name": "${SNI}",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "${REALITY_PUBLIC_KEY}",
+          "short_id": "${REALITY_SHORT_ID}"
+        }
+      },
+      "password": "${ANYTLS_PASS}",
+      "idle_session_check_interval": "30s",
+      "idle_session_timeout": "30s",
+      "min_idle_session": 5
+    }
+  ]
+}
+EOF
+    # 输出 Surge 配置格式
+    # snell, 124.156.157.132, 37662, psk = k0wvk2XOYVi1pXMu3uxf, version = 4, reuse = true, tfo = true, shadow-tls-password = FfnCJfW3aZOioOOO, shadow-tls-sni = www.microsoft.com, shadow-tls-version = 3
+    echo "Surge 配置格式："
+    echo "${IP_COUNTRY_IPV4} = snell, ${IPV4_ADDR}, ${SHADOWTLS_PORT}, psk = ${SNELL_PSK}, version = 5, reuse = true, tfo = true, shadow-tls-password = ${SHADOWTLS_PASS}, shadow-tls-sni = ${SNI}, shadow-tls-version = 3"
+
+    echo "server配置已生成: $CONFIG_PATH"
+    echo "client配置已生成: /etc/sing-box/client-config.json"
+    echo "AnyTLS 监听端口: $ANYTLS_PORT"
+    echo "AnyTLS 密码: $ANYTLS_PASS"
+    echo "Reality Private Key: $REALITY_PRIVATE_KEY"
+    echo "Reality Public Key: $REALITY_PUBLIC_KEY"
+    echo "Reality Short ID: $REALITY_SHORT_ID"
     echo "ShadowTLS 监听端口: $SHADOWTLS_DETOUR_PORT"
     echo "Shadowsocks 密码: $SHADOWSOCKS_PASS"
     echo "ShadowTLS 密码: $SHADOWTLS_DETOUR_PASS"
@@ -235,7 +358,7 @@ uninstall_singbox() {
 }
 
 menu() {
-    echo -e "\n=== sing-box 管理脚本 ==="
+    echo "\n=== sing-box 管理脚本 ==="
     echo "1. 安装 sing-box"
     echo "2. 生成配置文件"
     echo "3. 创建 systemd 服务"
