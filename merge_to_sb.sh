@@ -8,6 +8,7 @@ set -e
 
 SINGBOX_BIN="/usr/local/bin/sing-box"
 CONFIG_PATH="/etc/sing-box/config.json"
+CLIENT_CONFIG_PATH="/etc/sing-box/client-config.json"
 SERVICE_FILE="/etc/systemd/system/sing-box.service"
 
 # 定义配置目录
@@ -302,7 +303,7 @@ generate_config() {
 EOF
 
     # 生成sing-box client端配置
-    cat > /etc/sing-box/client-config.json <<EOF
+    cat > $CLIENT_CONFIG_PATH <<EOF
 {
   "outbounds": [
     {
@@ -354,12 +355,25 @@ EOF
 }
 EOF
     # 输出 Surge 配置格式
-    # snell, 124.156.157.132, 37662, psk = k0wvk2XOYVi1pXMu3uxf, version = 4, reuse = true, tfo = true, shadow-tls-password = FfnCJfW3aZOioOOO, shadow-tls-sni = www.microsoft.com, shadow-tls-version = 3
+    # snell, 124.156.157.132, 37662, psk = k0wvk2XOYVi1pXMu3uxf, version = 5, reuse = true, tfo = true, shadow-tls-password = FfnCJfW3aZOioOOO, shadow-tls-sni = www.microsoft.com, shadow-tls-version = 3
     echo "Surge 配置格式："
-    echo "${IP_COUNTRY_IPV4} = snell, ${IPV4_ADDR}, ${SHADOWTLS_PORT}, psk = ${SNELL_PSK}, version = 5, reuse = true, tfo = true, shadow-tls-password = ${SHADOWTLS_PASS}, shadow-tls-sni = ${SNI}, shadow-tls-version = 3"
-
+    # 写入配置到文件snell.conf
+    cat > /etc/sing-box/snell.conf <<EOF
+snell, ${IPV4_ADDR}, ${SNELL_PORT}, psk = ${SNELL_PSK}, version = 5, reuse = true, tfo = true, shadow-tls-password = ${SHADOWTLS_PASS}, shadow-tls-sni = ${SNELL_SHADOWTLS_SNI}, shadow-tls-version = 3
+EOF
+    cat /etc/sing-box/snell.conf
+    echo "Clash 配置格式："
+    # proxies:
+      # - {"type":"ss","server":"154.17.226.142","port":12817,"cipher":"2022-blake3-aes-256-gcm","password":"ofoTPmXZD5H3pd5z9HMY2piCRJ/+gAJv3nlL3NCt1UY=","plugin":"shadow-tls","plugin-opts":{"host":"www.microsoft.com","password":"XPJwgr8coXoHOEAk","version":3},"name":"🇺🇸 SS-US"}
+      # - {"name":"🏴‍☠️ anytls-sgp","type":"anytls","server":"104.255.68.233","port":14448,"password":"65e7416c-7675-4efe-8816-84754e08f168","client-fingerprint":"chrome","udp":true,"idle-session-check-interval":30,"idle-session-timeout":30,"min-idle-session":5,"sni":"www.microsoft.com","reality-opts":{"public-key":"AMz0xHM6opzZIrifakTkaML7xI5tT3bYkQPkAW6lzw8","short-id":"445cd57f"},"servername":"www.microsoft.com"}
+    cat > /etc/sing-box/clash.yaml <<EOF
+proxies:
+  - {"type":"ss","server":"${IPV4_ADDR}","port":${SHADOWTLS_DETOUR_PORT},"cipher":"2022-blake3-aes-256-gcm","password":"${SHADOWSOCKS_PASS}","plugin":"shadow-tls","plugin-opts":{"host":"${SHADOWTLS_DETOUR_SNI}","password":"${SHADOWTLS_DETOUR_PASS}","version":3},"name":"${IP_COUNTRY_IPV4}-SS-${IPV4_ADDR}"}
+  - {"name":"${IP_COUNTRY_IPV4}-AnyReality-${IPV4_ADDR}","type":"anytls","server":"${IPV4_ADDR}","port":${ANYTLS_PORT},"password":"${ANYTLS_PASS}","client-fingerprint":"chrome","udp":true,"idle-session-check-interval":30,"idle-session-timeout":30,"min-idle-session":5,"sni":"${ANYTLS_SNI}","reality-opts":{"public-key":"${REALITY_PUBLIC_KEY}","short-id":"${REALITY_SHORT_ID}"},"servername":"${ANYTLS_SNI}"}
+EOF
+    cat /etc/sing-box/clash.yaml
     echo "server配置已生成: $CONFIG_PATH"
-    echo "client配置已生成: /etc/sing-box/client-config.json"
+    echo "client配置已生成: $CLIENT_CONFIG_PATH"
     echo "AnyTLS 监听端口: $ANYTLS_PORT"
     echo "AnyTLS 密码: $ANYTLS_PASS"
     echo "Reality Private Key: $REALITY_PRIVATE_KEY"
@@ -424,20 +438,25 @@ menu() {
     echo "\n=== sing-box 管理脚本 ==="
     echo "1. 安装 sing-box"
     echo "2. 合并并生成配置文件"
-    echo "3. 创建 systemd 服务"
-    echo "4. 启动服务"
-    echo "5. 停止服务"
-    echo "6. 卸载 sing-box"
+    echo "3. 输出配置格式"
+    echo "4. 创建 systemd 服务"
+    echo "5. 启动服务"
+    echo "6. 停止服务"
+    echo "7. 卸载 sing-box"
     echo "0. 退出"
     echo "========================"
     read -p "请选择操作: " choice
     case $choice in
         1) install_singbox ;;
         2) generate_config ;;
-        3) create_service ;;
-        4) start_service ;;
-        5) stop_service ;;
-        6) uninstall_singbox ;;
+        3) echo "Clash 配置格式："
+           cat /etc/sing-box/clash.yaml
+           echo "Surge 配置格式："
+           cat /etc/sing-box/snell.conf ;;
+        4) create_service ;;
+        5) start_service ;;
+        6) stop_service ;;
+        7) uninstall_singbox ;;
         0) exit 0 ;;
         *) echo "无效选择" ;;
     esac
