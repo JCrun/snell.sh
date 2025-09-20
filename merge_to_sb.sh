@@ -58,15 +58,11 @@ generate_config() {
     fi
 
     read -p "请输入 AnyTLS 监听端口 (默认随机): " ANYTLS_PORT
-    if [ -z "$ANYTLS_PORT" ]; then
-        ANYTLS_PORT=$(shuf -i 10000-65535 -n 1)
-    fi
+    ANYTLS_PORT=$(shuf -i 10000-65535 -n 1)
 
     read -p "请输入 AnyTLS 密码 (默认随机): " ANYTLS_PASS
     # $(sing-box generate uuid)
-    if [ -z "$ANYTLS_PASS" ]; then
-        ANYTLS_PASS=$($SINGBOX_BIN generate uuid)
-    fi
+    ANYTLS_PASS=$($SINGBOX_BIN generate uuid)
 
     read -p "请输入 Reality Private Key (默认随机): " REALITY_PRIVATE_KEY
     key_pair=$(sing-box generate reality-keypair)
@@ -79,34 +75,80 @@ generate_config() {
     # $(sing-box generate rand --hex 4)
     REALITY_SHORT_ID=$(sing-box generate rand --hex 4)
 
-    read -p "请输入 ShadowTLS 监听端口 (默认随机): " SHADOWTLS_DETOUR_PORT
-    if [ -z "$SHADOWTLS_DETOUR_PORT" ]; then
-        SHADOWTLS_DETOUR_PORT=$(shuf -i 10000-65535 -n 1)
-    fi
+    read -p "请输入 AnyTLS 域名 (默认 www.microsoft.com): " ANYTLS_SNI
+    ANYTLS_SNI=${ANYTLS_SNI:-www.microsoft.com}
 
-    read -p "请输入 Shadowsocks 密码 (默认随机): " SHADOWSOCKS_PASS
+    # /etc/ss-rust/config.json
+    SHADOWSOCKS_CONF_FILE="/etc/ss-rust/config.json"
+    if [ ! -f "${SHADOWSOCKS_CONF_FILE}" ]; then
+        echo "Shadowsocks 配置文件不存在: ${SHADOWSOCKS_CONF_FILE}"
+        exit 1
+    fi
+    # 生成 Shadowsocks + ShadowTLS 配置
+    # {
+    #     "server": "::",
+    #     "server_port": 31681,
+    #     "password": "iGrYaHU/ZE+yxeUX0xaVzLJRWsR0ltG/AYRnjnplSYQ=",
+    #     "method": "2022-blake3-aes-256-gcm",
+    #     "fast_open": true,
+    #     "mode": "tcp_and_udp",
+    #     "user": "nobody",
+    #     "timeout": 300
+    # }
+    SHADOWSOCKS_PASS=$(grep -E '"password"' "${SHADOWSOCKS_CONF_FILE}" | awk -F':' '{print $2}' | tr -d ' ",')
     if [ -z "$SHADOWSOCKS_PASS" ]; then
-        SHADOWSOCKS_PASS=$($SINGBOX_BIN generate rand 32 --base64)
+        echo "无法从 Shadowsocks 配置文件中提取 Shadowsocks 密码"
+        exit 1
     fi
-
-    read -p "请输入 ShadowTLS 密码 (默认随机): " SHADOWTLS_DETOUR_PASS
+    SHADOWSOCKS_PORT=$(grep -E '"server_port"' "${SHADOWSOCKS_CONF_FILE}" | awk -F':' '{print $2}' | tr -d ' ,')
+    if [ -z "$SHADOWSOCKS_PORT" ]; then
+        echo "无法从 Shadowsocks 配置文件中提取 Shadowsocks 端口"
+        exit 1
+    fi
+    # 从/etc/systemd/system/shadowtls-ss.service提取 ShadowTLS 信息
+    SHADOWTLS_DETOUR_CONF_FILE="/etc/systemd/system/shadowtls-ss.service"
+    if [ ! -f "${SHADOWTLS_DETOUR_CONF_FILE}" ]; then
+        echo "ShadowTLS 配置文件不存在: ${SHADOWTLS_DETOUR_CONF_FILE}"
+        exit 1
+    fi
+    # ExecStart=/usr/local/bin/shadow-tls --v3 server --listen ::0:24941 --server 127.0.0.1:31681 --tls www.microsoft.com --password FfnCJfW3aZOioOOO
+    SHADOWTLS_DETOUR_PASS=$(grep -E 'ExecStart' "${SHADOWTLS_DETOUR_CONF_FILE}" | sed -n 's/.*--password \([^ ]*\).*/\1/p')
     if [ -z "$SHADOWTLS_DETOUR_PASS" ]; then
-        SHADOWTLS_DETOUR_PASS=$($SINGBOX_BIN generate rand 16 --base64)
+        echo "无法从 shadowtls-ss.service 中提取 ShadowTLS 密码"
+        exit 1
+    fi
+    SHADOWTLS_DETOUR_PORT=$(grep -E 'ExecStart' "${SHADOWTLS_DETOUR_CONF_FILE}" | sed -n 's/.*--listen ::0:\([0-9]*\).*/\1/p')
+    if [ -z "$SHADOWTLS_DETOUR_PORT" ]; then
+        echo "无法从 shadowtls-ss.service 中提取 ShadowTLS 监听端口"
+        exit 1
+    fi
+    SHADOWTLS_DETOUR_SNI=$(grep -E 'ExecStart' "${SHADOWTLS_DETOUR_CONF_FILE}" | sed -n 's/.*--tls \([^ ]*\).*/\1/p')
+    if [ -z "$SHADOWTLS_DETOUR_SNI" ]; then
+        echo "无法从 shadowtls-ss.service 中提取 ShadowTLS SNI"
+        exit 1
     fi
 
-    read -p "请输入 ShadowTLS 伪装域名 (例如 www.microsoft.com): " SNI
-    if [ -z "$SNI" ]; then
-        SNI=${SNI:-www.microsoft.com}
+    # 从 Snell 配置文件提取 Snell ShadowTLS 信息 cat /etc/systemd/system/shadowtls-snell-39272.service
+    SNELL_SHADOWTLS_CONF_FILE="/etc/systemd/system/shadowtls-snell-*.service"
+    if [ ! -f ${SNELL_SHADOWTLS_CONF_FILE} ]; then
+        echo "Snell ShadowTLS 配置文件不存在: ${SNELL_SHADOWTLS_CONF_FILE}"
+        exit 1
     fi
-
-    read -p "请输入 Snell ShadowTLS 监听端口 (默认随机): " SHADOWTLS_PORT
-    if [ -z "$SHADOWTLS_PORT" ]; then
-        SHADOWTLS_PORT=$(shuf -i 10000-65535 -n 1)
+    # ExecStart=/usr/local/bin/shadow-tls --v3 server --listen ::0:37662 --server 127.0.0.1:39272 --tls www.microsoft.com --password FfnCJfW3aZOioOOO
+    SNELL_SHADOWTLS_SNI=$(grep -E 'ExecStart' ${SNELL_SHADOWTLS_CONF_FILE} | sed -n 's/.*--tls \([^ ]*\).*/\1/p' | head -n 1)
+    if [ -z "$SNELL_SHADOWTLS_SNI" ]; then
+        echo "无法从 shadowtls-snell-*.service 中提取 Snell ShadowTLS SNI"
+        exit 1
     fi
-
-    read -p "请输入 Snell 密码 (默认随机): " SHADOWTLS_PASS
-    if [ -z "$SHADOWTLS_PASS" ]; then
-        SHADOWTLS_PASS=$($SINGBOX_BIN generate rand 16 --base64)
+    SNELL_SHADOWTLS_PORT=$(grep -E 'ExecStart' ${SNELL_SHADOWTLS_CONF_FILE} | sed -n 's/.*--listen ::0:\([0-9]*\).*/\1/p' | head -n 1)
+    if [ -z "$SNELL_SHADOWTLS_PORT" ]; then
+        echo "无法从 shadowtls-snell-*.service 中提取 Snell ShadowTLS 监听端口"
+        exit 1
+    fi
+    SNELL_SHADOWTLS_PASS=$(grep -E 'ExecStart' ${SNELL_SHADOWTLS_CONF_FILE} | sed -n 's/.*--password \([^ ]*\).*/\1/p' | head -n 1)
+    if [ -z "$SNELL_SHADOWTLS_PASS" ]; then
+        echo "无法从 shadowtls-snell-*.service 中提取 Snell ShadowTLS 密码"
+        exit 1
     fi
 
     SNELL_PORT=$(grep -E '^listen' "${SNELL_CONF_FILE}" | sed -n 's/.*::0:\([0-9]*\)/\1/p')
@@ -136,11 +178,11 @@ generate_config() {
       "listen_port": ${ANYTLS_PORT},
       "tls": {
         "enabled": true,
-        "server_name": "${SNI}",
+        "server_name": "${ANYTLS_SNI}",
         "reality": {
           "enabled": true,
           "handshake": {
-            "server": "${SNI}",
+            "server": "${ANYTLS_SNI}",
             "server_port": 443
           },
           "private_key": "${REALITY_PRIVATE_KEY}",
@@ -168,15 +210,15 @@ generate_config() {
       "type": "shadowtls",
       "tag": "shadowtls-in-for-snell",
       "listen": "::",
-      "listen_port": ${SHADOWTLS_PORT},
+      "listen_port": ${SNELL_SHADOWTLS_PORT},
       "version": 3,
       "users": [
         {
-          "password": "${SHADOWTLS_PASS}"
+          "password": "${SNELL_SHADOWTLS_PASS}"
         }
       ],
       "handshake": {
-        "server": "${SNI}",
+        "server": "${SNELL_SHADOWTLS_SNI}",
         "server_port": 443
       },
       "strict_mode": true
@@ -194,7 +236,7 @@ generate_config() {
         }
       ],
       "handshake": {
-        "server": "${SNI}",
+        "server": "${SHADOWTLS_DETOUR_SNI}",
         "server_port": 443
       },
       "strict_mode": true
@@ -323,12 +365,17 @@ EOF
     echo "Reality Private Key: $REALITY_PRIVATE_KEY"
     echo "Reality Public Key: $REALITY_PUBLIC_KEY"
     echo "Reality Short ID: $REALITY_SHORT_ID"
-    echo "ShadowTLS 监听端口: $SHADOWTLS_DETOUR_PORT"
+    echo "AnyTLS SNI: $ANYTLS_SNI"
+    echo "Shadowsocks 端口: $SHADOWSOCKS_PORT"
     echo "Shadowsocks 密码: $SHADOWSOCKS_PASS"
+    echo "ShadowTLS 监听端口: $SHADOWTLS_DETOUR_PORT"
     echo "ShadowTLS 密码: $SHADOWTLS_DETOUR_PASS"
-    echo "Snell ShadowTLS 监听端口: $SHADOWTLS_PORT"
-    echo "Snell ShadowTLS 密码: $SHADOWTLS_PASS"
-    echo "SNI 域名: $SNI"
+    echo "ShadowTLS SNI: $SHADOWTLS_DETOUR_SNI"
+    echo "Snell ShadowTLS 监听端口: $SNELL_SHADOWTLS_PORT"
+    echo "Snell ShadowTLS 密码: $SNELL_SHADOWTLS_PASS"
+    echo "Snell ShadowTLS SNI: $SNELL_SHADOWTLS_SNI"
+    echo "Snell 端口: $SNELL_PORT"
+    echo "Snell 密码: $SNELL_PSK"
 }
 
 create_service() {
@@ -376,7 +423,7 @@ uninstall_singbox() {
 menu() {
     echo "\n=== sing-box 管理脚本 ==="
     echo "1. 安装 sing-box"
-    echo "2. 生成配置文件"
+    echo "2. 合并并生成配置文件"
     echo "3. 创建 systemd 服务"
     echo "4. 启动服务"
     echo "5. 停止服务"
