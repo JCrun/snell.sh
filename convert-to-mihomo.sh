@@ -53,9 +53,14 @@ if [ -z "$ANYTLS_FINGERPRINT" ] || [ "$ANYTLS_FINGERPRINT" = "null" ]; then
     ANYTLS_FINGERPRINT="chrome"
 fi
 
+if [ $? -eq 0 ] && [ ! -z "$SHADOWTLS_SERVER" ]; then
+    IP_COUNTRY_IPV4=$(curl -s http://ipinfo.io/${SHADOWTLS_SERVER}/country)
+    echo "IPv4 地址: ${SHADOWTLS_SERVER} 所在国家: ${IP_COUNTRY_IPV4}"
+fi
+
 # 生成代理名称
-SS_NAME="SS-${SHADOWTLS_SERVER}"
-REALITY_NAME="Reality-${ANYTLS_SERVER}"
+SS_NAME="${IP_COUNTRY_IPV4}-SS-${SHADOWTLS_SERVER}"
+REALITY_NAME="${IP_COUNTRY_IPV4}-Reality-${ANYTLS_SERVER}"
 
 # 输出 Mihomo 格式配置
 echo "proxies:"
