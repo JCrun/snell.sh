@@ -79,6 +79,13 @@ generate_config() {
     read -p "请输入 AnyTLS 域名 (默认 www.microsoft.com): " ANYTLS_SNI
     ANYTLS_SNI=${ANYTLS_SNI:-www.microsoft.com}
 
+    # 设置TCP Brutal,需要获取服务器的上传和下载带宽,默认30Mbps上行,300Mbps下行
+    read -p "请输入 TCP Brutal 上行带宽 (Mbps, 默认 30): " UP_Mbps
+    UP_Mbps=${UP_Mbps:-30}
+    read -p "请输入 TCP Brutal 下行带宽 (Mbps, 默认 300): " DOWN_Mbps
+    DOWN_Mbps=${DOWN_Mbps:-300}
+
+
     # /etc/ss-rust/config.json
     SHADOWSOCKS_CONF_FILE="/etc/ss-rust/config.json"
     if [ ! -f "${SHADOWSOCKS_CONF_FILE}" ]; then
@@ -253,8 +260,8 @@ generate_config() {
         "padding": true,
         "brutal": {
           "enabled": true,
-          "up_mbps": 30,
-          "down_mbps": 300
+          "up_mbps": ${UP_Mbps},
+          "down_mbps": ${DOWN_Mbps}
         }
       }
     }
@@ -311,7 +318,16 @@ EOF
       "type": "shadowsocks",
       "method": "2022-blake3-aes-256-gcm",
       "password": "${SHADOWSOCKS_PASS}",
-      "detour": "shadowtls-out"
+      "detour": "shadowtls-out",
+      "multiplex": {
+        "enabled": true,
+        "padding": true,
+        "brutal": {
+          "enabled": true,
+          "up_mbps": ${DOWN_Mbps},
+          "down_mbps": ${UP_Mbps}
+        }
+      }
     },
     {
       "tag": "shadowtls-out",

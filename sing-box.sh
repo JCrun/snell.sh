@@ -80,14 +80,20 @@ generate_config() {
     # $(sing-box generate rand --hex 4)
     REALITY_SHORT_ID=$(sing-box generate rand --hex 4)
 
-    read -p "请输入 ShadowTLS 监听端口 (默认随机): " SHADOWTLS_DETOUR_PORT
-    if [ -z "$SHADOWTLS_DETOUR_PORT" ]; then
-        SHADOWTLS_DETOUR_PORT=$(shuf -i 10000-65535 -n 1)
-    fi
-
     read -p "请输入 Shadowsocks 密码 (默认随机): " SHADOWSOCKS_PASS
     if [ -z "$SHADOWSOCKS_PASS" ]; then
         SHADOWSOCKS_PASS=$($SINGBOX_BIN generate rand 32 --base64)
+    fi
+
+    # 设置TCP Brutal,需要获取服务器的上传和下载带宽,默认30Mbps上行,300Mbps下行
+    read -p "请输入 TCP Brutal 上行带宽 (Mbps, 默认 30): " UP_Mbps
+    UP_Mbps=${UP_Mbps:-30}
+    read -p "请输入 TCP Brutal 下行带宽 (Mbps, 默认 300): " DOWN_Mbps
+    DOWN_Mbps=${DOWN_Mbps:-300}
+
+    read -p "请输入 ShadowTLS 监听端口 (默认随机): " SHADOWTLS_DETOUR_PORT
+    if [ -z "$SHADOWTLS_DETOUR_PORT" ]; then
+        SHADOWTLS_DETOUR_PORT=$(shuf -i 10000-65535 -n 1)
     fi
 
     read -p "请输入 ShadowTLS 密码 (默认随机): " SHADOWTLS_DETOUR_PASS
@@ -211,8 +217,8 @@ generate_config() {
         "padding": true,
         "brutal": {
           "enabled": true,
-          "up_mbps": 30,
-          "down_mbps": 300
+          "up_mbps": ${UP_Mbps},
+          "down_mbps": ${DOWN_Mbps}
         }
       }
     }
@@ -269,7 +275,16 @@ EOF
       "type": "shadowsocks",
       "method": "2022-blake3-aes-256-gcm",
       "password": "${SHADOWSOCKS_PASS}",
-      "detour": "${IP_COUNTRY_IPV4}-ShadowTLS-${IPV4_ADDR}"
+      "detour": "${IP_COUNTRY_IPV4}-ShadowTLS-${IPV4_ADDR}",
+      "multiplex": {
+        "enabled": true,
+        "padding": true,
+        "brutal": {
+          "enabled": true,
+          "up_mbps": ${DOWN_Mbps},
+          "down_mbps": ${UP_Mbps}
+        }
+      }
     },
     {
       "tag": "${IP_COUNTRY_IPV4}-ShadowTLS-${IPV4_ADDR}",
@@ -326,7 +341,7 @@ EOF
       # - {"name":"🏴‍☠️ anytls-sgp","type":"anytls","server":"104.255.68.233","port":14448,"password":"65e7416c-7675-4efe-8816-84754e08f168","client-fingerprint":"chrome","udp":true,"idle-session-check-interval":30,"idle-session-timeout":30,"min-idle-session":5,"sni":"www.microsoft.com","reality-opts":{"public-key":"AMz0xHM6opzZIrifakTkaML7xI5tT3bYkQPkAW6lzw8","short-id":"445cd57f"},"servername":"www.microsoft.com"}
     cat > /etc/sing-box/clash.yaml <<EOF
 proxies:
-  - {"type":"ss","server":"${IPV4_ADDR}","port":${SHADOWTLS_DETOUR_PORT},"cipher":"2022-blake3-aes-256-gcm","password":"${SHADOWSOCKS_PASS}","plugin":"shadow-tls","plugin-opts":{"host":"${SNI}","password":"${SHADOWTLS_DETOUR_PASS}","version":3},"name":"${IP_COUNTRY_IPV4}-SS-${IPV4_ADDR}"}
+  - {"type":"ss","server":"${IPV4_ADDR}","port":${SHADOWTLS_DETOUR_PORT},"cipher":"2022-blake3-aes-256-gcm","password":"${SHADOWSOCKS_PASS}","plugin":"shadow-tls","plugin-opts":{"host":"${SNI}","password":"${SHADOWTLS_DETOUR_PASS}","version":3},"smux":{"enabled":true,"padding":true,"brutal-opts":{"enabled":true,"up":${DOWN_Mbps},"down":${UP_Mbps}}},"name":"${IP_COUNTRY_IPV4}-SS-${IPV4_ADDR}"}
   - {"name":"${IP_COUNTRY_IPV4}-AnyReality-${IPV4_ADDR}","type":"anytls","server":"${IPV4_ADDR}","port":${ANYTLS_PORT},"password":"${ANYTLS_PASS}","client-fingerprint":"chrome","udp":true,"idle-session-check-interval":30,"idle-session-timeout":30,"min-idle-session":5,"sni":"${SNI}","reality-opts":{"public-key":"${REALITY_PUBLIC_KEY}","short-id":"${REALITY_SHORT_ID}"},"servername":"${SNI}"}
 EOF
     cat /etc/sing-box/clash.yaml
